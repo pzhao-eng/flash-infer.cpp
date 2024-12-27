@@ -42,12 +42,13 @@ else()
     message(FATAL_ERROR "CUDA not found")
 endif()
 
-add_executable(${TARGET} ${APP_NAME}.cu)
+add_executable(${TARGET} ./example/cpp/${APP_NAME}.cu ./utils/cuda_utils.cu)
 
 target_include_directories(${TARGET} PUBLIC
-                           ${PROJECT_SOURCE_DIR}/../../tools/util/include/
-                           ${PROJECT_SOURCE_DIR}/../../include/
-                           ${PROJECT_SOURCE_DIR}/../../examples/common/
+                           ${PROJECT_SOURCE_DIR}/
+                           /mnt/data/nfsroot/zhaop/tools/cutlass/tools/util/include/
+                           /mnt/data/nfsroot/zhaop/tools/cutlass/include/
+                           /mnt/data/nfsroot/zhaop/tools/cutlass/examples/common/
                            ${CUDAToolkit_INCLUDE_DIRS}
                            )
 

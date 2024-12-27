@@ -392,6 +392,99 @@ __forceinline__ __device__ void copy_w_min_idx(Tensor<Engine0, Layout0> const &S
     }
 }
 
+template<bool A_in_regs=false, bool B_in_regs=false, typename Tensor0, typename Tensor1,
+         typename Tensor2, typename Tensor3, typename Tensor4,
+         typename TiledMma, typename TiledCopyA, typename TiledCopyB,
+         typename ThrCopyA, typename ThrCopyB>
+__forceinline__ __device__ void gemm_warp(Tensor0 &acc, Tensor1 &tCrA, Tensor2 &tCrB, Tensor3 const& tCsA,
+                            Tensor4 const& tCsB, TiledMma tiled_mma,
+                            TiledCopyA smem_tiled_copy_A, TiledCopyB smem_tiled_copy_B,
+                            ThrCopyA smem_thr_copy_A, ThrCopyB smem_thr_copy_B) {
+    CUTE_STATIC_ASSERT_V(size<1>(tCrA) == size<1>(acc));                     // MMA_M
+    CUTE_STATIC_ASSERT_V(size<1>(tCrB) == size<2>(acc));                     // MMA_N
+    CUTE_STATIC_ASSERT_V(size<2>(tCrA) == size<2>(tCrB));                     // MMA_K
+    Tensor tCrA_copy_view = smem_thr_copy_A.retile_D(tCrA);
+    CUTE_STATIC_ASSERT_V(size<1>(tCsA) == size<1>(tCrA_copy_view));            // M
+    Tensor tCrB_copy_view = smem_thr_copy_B.retile_D(tCrB);
+    CUTE_STATIC_ASSERT_V(size<1>(tCsB) == size<1>(tCrB_copy_view));            // N
+    if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, _0{}), tCrA_copy_view(_, _, _0{})); }
+    if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, _0{}), tCrB_copy_view(_, _, _0{})); }
+    #pragma unroll
+    for (int i = 0; i < size<2>(tCrA); ++i) {
+        if (i < size<2>(tCrA) - 1) {
+            if (!A_in_regs) { cute::copy(smem_tiled_copy_A, tCsA(_, _, i + 1), tCrA_copy_view(_, _, i + 1)); }
+            if (!B_in_regs) { cute::copy(smem_tiled_copy_B, tCsB(_, _, i + 1), tCrB_copy_view(_, _, i + 1)); }
+        }
+        cute::gemm(tiled_mma, tCrA(_, _, i), tCrB(_, _, i), acc);
+    }
+}
+
+template <bool Is_even_MN=true, bool Is_even_K=true, bool Clear_OOB_MN=false, bool Clear_OOB_K=true,
+          typename TiledCopy, typename Engine0, typename Layout0, typename Engine1, typename Layout1,
+          typename Engine2, typename Layout2>
+__forceinline__ __device__ void copy_simplify(TiledCopy tiled_copy, Tensor<Engine0, Layout0> const &S,
+                            Tensor<Engine1, Layout1> &D, Tensor<Engine2, Layout2> const &identity_MN,
+                            const int max_MN = 0) {
+    CUTE_STATIC_ASSERT_V(rank(S) == Int<3>{});
+    CUTE_STATIC_ASSERT_V(rank(D) == Int<3>{});
+    CUTE_STATIC_ASSERT_V(size<0>(S) == size<0>(D));                     // MMA
+    CUTE_STATIC_ASSERT_V(size<1>(S) == size<1>(D));                     // MMA_M
+    CUTE_STATIC_ASSERT_V(size<2>(S) == size<2>(D));                     // MMA_K
+    // There's no case where !Clear_OOB_K && Clear_OOB_MN
+    static_assert(!(Clear_OOB_MN && !Clear_OOB_K));
+    #pragma unroll
+    for (int m = 0; m < size<1>(S); ++m) {
+      if (Is_even_MN || get<0>(identity_MN(0, m, 0)) < max_MN) {
+        cute::copy(tiled_copy, S(_, m, _), D(_, m, _));
+      } else if (Clear_OOB_MN) {
+        cute::clear(D(_, m, _));
+      }
+    }
+}
+
+template <typename FlashInferTraits>
+void atten_cpu(const int seqlen_q, const int seqlen_kv, const int n_heads, const int n_k,
+  const void *A, const void *B, const void *V, void *C) {
+  using Element = typename FlashInferTraits::Element;
+  Element *Q_host = (Element*)A;
+  Element *K_host = (Element*)B;
+  Element *V_host = (Element*)V;
+  Element *O_host_ref = (Element*)C;
+  float *acc_val_arr = (float*)malloc(seqlen_kv * sizeof(float));
+  for (int i = 0; i < seqlen_q; i++) {
+    for (int i_head = 0; i_head < n_heads; i_head++) {
+      float max_val = -INFINITY;
+      for (int j = 0; j < seqlen_kv; j++) {
+        float acc_val = 0.0;
+        for (int k = 0; k < n_k; k++) {
+          acc_val += Q_host[i * n_heads * n_k + i_head * n_k + k] * K_host[k * n_heads * seqlen_kv + i_head * seqlen_kv + j];
+        }
+        acc_val /= sqrtf(float(n_k));
+        max_val = std::max(max_val, acc_val);
+        acc_val_arr[j] = acc_val;
+      }
+
+      float exp_sum = 0.0;
+      for (int j = 0; j < seqlen_kv; j++) {
+        acc_val_arr[j] = expf(acc_val_arr[j] - max_val);
+        exp_sum += acc_val_arr[j];
+      }
+
+      for (int j = 0; j < seqlen_kv; j++) {
+        acc_val_arr[j] /= exp_sum;
+      }
+
+      for (int i_k = 0; i_k < n_k; i_k++) {
+        float val = 0.0;
+        for (int j = 0; j < seqlen_kv; j++) {
+          val += acc_val_arr[j] * float(V_host[j * n_heads * n_k + i_head * n_k + i_k]);
+        }
+        O_host_ref[i * n_heads * n_k + i_head * n_k + i_k] = Element(val);
+      }
+    }
+  }
+  free(acc_val_arr);
+}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 }  // namespace flash
