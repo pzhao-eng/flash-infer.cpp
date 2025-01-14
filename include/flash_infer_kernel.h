@@ -136,7 +136,7 @@ __global__ void flash_infer_kernel(FlashInferParams params, const int n_block) {
 
     softmax.template softmax_rescale_o</*Is_first=*/false,  /*Check_inf=*/false>(acc_s, acc_o, softmax_scale_log2);
   }
-  cute::cp_async_wait<0>();
+  flash::cp_async_wait<0>();
   __syncthreads();
   // Convert acc_s from fp32 to fp16/bf16
   Tensor rP = flash::convert_type<Element>(acc_s);
