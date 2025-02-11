@@ -9,7 +9,8 @@
 #include <cute/layout.hpp>
 
 using namespace cute;
-template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, typename elem_type=cutlass::half_t>
+template<int kHeadDim_, int kBlockM_, int kBlockN_, int kNWarps_, typename elem_type=cutlass::half_t,
+         int kSPlitKV_ = 1>
 struct FlashInferTraits {
 
   using Element = elem_type;
@@ -17,6 +18,7 @@ struct FlashInferTraits {
   static constexpr int kNThreads = kNWarps * 32;
   static constexpr int kBlockM = kBlockM_;
   static constexpr int kBlockN = kBlockN_;
+  static constexpr int kSplitKV = kSPlitKV_;
 
   static constexpr int kHeadDim = kHeadDim_;
   static constexpr int kBlockKSmem = kHeadDim % 64 == 0 ? 64 : 32;

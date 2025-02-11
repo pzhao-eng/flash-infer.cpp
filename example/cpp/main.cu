@@ -4,29 +4,32 @@ using namespace cute;
 int main() {
 
   using Element = cutlass::half_t;
+  constexpr int kSplitKV = 8;
   const int batch_size = 1;
   const int seqlen_q = 400;
   const int seqlen_kv = 32768;
   const int n_heads = 8;
   const int head_dims_q = 32;
   const int head_dims_kv = 32;
-  const int n_test = 20;
+  const int n_test = 1;
 
   // init 
   const int n_bytes_output = batch_size * seqlen_q * n_heads * head_dims_q * sizeof(Element);
   FlashInferParams params(batch_size, seqlen_q, seqlen_kv, n_heads, head_dims_q, head_dims_kv, 0.0, 0.0);
-  prepare_input<Element>(params);
+  prepare_input<Element, kSplitKV>(params);
   cudaEvent_t start, stop;
   cudaEventCreate(&start);
   cudaEventCreate(&stop);
 
   // warm up
-  run_flash_infer<FlashInferTraits<32, 128, 128, 4, Element>>(params);
+  printf("Warm up\n");
+  run_flash_split_kv_infer<FlashInferTraits<32, 64, 128, 4, Element, kSplitKV>>(params);
+  printf("Warm up done\n");
   cudaDeviceSynchronize();
 
   cudaEventRecord(start, params.stream);
   for (int i = 0; i < n_test; i++) {
-    run_flash_infer<FlashInferTraits<32, 128, 128, 4, Element>>(params);
+    run_flash_split_kv_infer<FlashInferTraits<32, 64, 128, 4, Element, kSplitKV>>(params);
   }
   cudaEventRecord(stop, params.stream);
   cudaEventSynchronize(stop);

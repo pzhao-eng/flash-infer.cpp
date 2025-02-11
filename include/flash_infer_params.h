@@ -14,6 +14,8 @@ struct FlashInferParams {
   void *K_ptr = nullptr;
   void *V_ptr = nullptr;
   void *output_ptr = nullptr;
+  void *output_accum_ptr = nullptr;
+  void *lse_accum_ptr = nullptr;
   void *output_host = nullptr;
   float softmax_scale;
   float softmax_scale_log2;

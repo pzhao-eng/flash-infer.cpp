@@ -17,5 +17,9 @@ void output_as_bin(const char *filename, const char *data, const int n);
 template <typename kernel_traits>
 void run_flash_infer(FlashInferParams params);
 
-template <typename Element>
+
+template <typename kernel_traits>
+void run_flash_split_kv_infer(const FlashInferParams params);
+
+template <typename Element, int SplitKV>
 void prepare_input(FlashInferParams &params);
