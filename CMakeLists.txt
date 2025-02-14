@@ -55,7 +55,7 @@ target_include_directories(${TARGET} PUBLIC
 target_compile_options(${TARGET} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
                            # --generate-line-info
                            --use_fast_math
-                           --ptxas-options=-v
+                           # --ptxas-options=-v
                            --expt-relaxed-constexpr
                            --expt-extended-lambda
                            -DENABLE_BF16
